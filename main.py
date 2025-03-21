@@ -4,11 +4,20 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.warnings import PTBUserWarning
 from warnings import filterwarnings
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file if it exists
+load_dotenv()
+
+# Get environment variables or use default values
+OLLAMA_ENDPOINT = os.environ.get("OLLAMA_ENDPOINT", "http://localhost:11434")
+TELEBOT_TOKEN = os.environ.get("TELEBOT-TOKEN", None)
+
+# Check if TELEBOT_TOKEN is set
+if TELEBOT_TOKEN is None:
+    raise ValueError("TELEBOT-TOKEN environment variable is not set. Please set it before running the script.")
 
 from utils import *
-
-OLLAMA_ENDPOINT = os.environ["OLLAMA_ENDPOINT"]
-TELEBOT_TOKEN = os.environ["TELEBOT-TOKEN"]
 
 # States
 MAINMENU, MENUWRAPPER = range(2)

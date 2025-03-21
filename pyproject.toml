@@ -1,0 +1,11 @@
+[project]
+name = "mtc2025"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "python-dotenv==1.0.0",
+    "python-telegram-bot==20.6",
+    "requests>=2.31.0",
+]
