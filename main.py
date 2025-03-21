@@ -5,6 +5,8 @@ from telegram.warnings import PTBUserWarning
 from warnings import filterwarnings
 import os
 from dotenv import load_dotenv
+import json
+from datetime import datetime
 
 # Load environment variables from .env file if it exists
 load_dotenv()
@@ -21,6 +23,12 @@ from utils import *
 
 # States
 MAINMENU, MENUWRAPPER, MAKAN, JOMXZ, SEMBANG, SEMBANG_FREQUENCY, SEMBANG_DAY, SEMBANG_TIME, SEMBANG_REFLECTION = range(9)
+# Profile states
+PROFILE_MENU, PROFILE_VIEW, PROFILE_EDIT, PROFILE_NICKNAME, PROFILE_OCCUPATION, PROFILE_HOBBIES, PROFILE_FOOD_LIKES, PROFILE_FOOD_DISLIKES, PROFILE_ALLERGIES = range(9, 18)
+
+# Profiles directory
+PROFILES_DIR = "profiles"
+os.makedirs(PROFILES_DIR, exist_ok=True)
 
 # <--START OF BUTTON CREATION FUNCTIONS-->
 def buttonOption():
@@ -55,11 +63,36 @@ def time_buttons():
         [InlineKeyboardButton("Custom time", callback_data="custom_time")]
     ]
     return InlineKeyboardMarkup(keyboard)
+
+def profile_menu_buttons():
+    keyboard = [
+        [InlineKeyboardButton("View my profile", callback_data="view_profile")],
+        [InlineKeyboardButton("Edit my profile", callback_data="edit_profile")],
+        [InlineKeyboardButton("Exit menu", callback_data="exit_menu")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
 # <--END OF BUTTON CREATION FUNCTIONS-->
+
+# <--START OF HELPER FUNCTIONS-->
+def get_profile_path(user_id):
+    return os.path.join(PROFILES_DIR, f"{user_id}.json")
+
+def save_profile(user_id, profile_data):
+    with open(get_profile_path(user_id), 'w') as f:
+        json.dump(profile_data, f)
+
+def load_profile(user_id):
+    profile_path = get_profile_path(user_id)
+    if os.path.exists(profile_path):
+        with open(profile_path, 'r') as f:
+            return json.load(f)
+    return None
+# <--END OF HELPER FUNCTIONS-->
 
 # <--START OF STATE FUNCTIONS-->
 async def start(update, context):
-    await update.message.reply_text("Selamat pagi Keluarga Bahagia! I'm KeluargaAI, your family assistant.\n\nUse my commands to help plan family meals, activities, and reflection time together.\n\n /makan - Decide what and where to eat\n /jomxz - Find activities based on interests\n /sembang - Schedule family reflection time")
+    current_date = datetime.now().strftime("%B %d")
+    await update.message.reply_text(f"Selamat datang! I'm KeluargaAI, your family companion designed to strengthen the bonds between families in Singapore.\n\nIn today's busy world, I'm here to help your family stay connected, celebrate traditions, and create meaningful moments together.\n\nWhether you're looking for activities to do as a family, or ways to connect across generations, I'm here to assist.\n{current_date}\n\n👤 /profile - View or edit your personal profile\n\n🍚 /makan - Decide what and where to eat\n\n📅 /jomxz - Find activities based on interests\n\n💬 /sembang - Schedule family reflection time")
     return ConversationHandler.END
 
 async def cancel(update, context):
@@ -142,7 +175,7 @@ async def sembang_time(update, context):
         schedule_text = f"at {time}"
     
     await query.edit_message_text(
-        f"{user.first_name} - {query.message.date.strftime('%I:%M %p')}\nGreat! I've scheduled family reflection time for {schedule_text}.\n✓ Family Reflection: {schedule_text.capitalize()}\n\nLet's start with today's reflection. Everyone please share:\n1. One highlight from your week\n2. One challenge you faced\n3. Something you're looking forward to next week\n\nWho would like to start?"
+        f"{user.first_name} - {query.message.date.strftime('%I:%M %p')}\nGreat! I've scheduled family reflection time for {schedule_text}.\n✅ Family Reflection: {schedule_text.capitalize()}\n\nLet's start with today's reflection. Everyone please share:\n1. One highlight from your week\n2. One challenge you faced\n3. Something you're looking forward to next week\n\nWho would like to start?"
     )
     return SEMBANG_REFLECTION
 
@@ -154,6 +187,95 @@ async def sembang_reflection(update, context):
         f"Ayah - {update.message.date.strftime('%I:%M %p')}\nThank you for sharing, {user.first_name}! Who would like to go next?"
     )
     return SEMBANG_REFLECTION
+
+# Profile functions
+async def profile_command(update, context):
+    await update.message.reply_text(
+        "Profile Menu:",
+        reply_markup=profile_menu_buttons()
+    )
+    return PROFILE_MENU
+
+async def profile_menu_handler(update, context):
+    query = update.callback_query
+    await query.answer()
+    choice = query.data
+    
+    if choice == "view_profile":
+        user_id = query.from_user.id
+        profile = load_profile(user_id)
+        
+        if profile:
+            profile_text = f"Nickname: {profile.get('nickname', 'Not set')}\n"
+            profile_text += f"Occupation: {profile.get('occupation', 'Not set')}\n"
+            profile_text += f"Hobbies: {profile.get('hobbies', 'Not set')}\n"
+            profile_text += f"Food likes: {profile.get('food_likes', 'Not set')}\n"
+            profile_text += f"Food dislikes: {profile.get('food_dislikes', 'Not set')}\n"
+            profile_text += f"Allergies: {profile.get('allergies', 'Not set')}"
+            
+            await query.edit_message_text(profile_text)
+        else:
+            await query.edit_message_text("You currently have no profile saved. Please create your profile.")
+        return ConversationHandler.END
+    
+    elif choice == "edit_profile":
+        await query.edit_message_text("Edit my profile")
+        await query.message.reply_text("Let's set up your profile! I'll ask you a few questions. Question 1: What is your nickname in the family?")
+        return PROFILE_NICKNAME
+    
+    elif choice == "exit_menu":
+        await query.edit_message_text("Exiting profile menu.")
+        return ConversationHandler.END
+
+async def profile_nickname(update, context):
+    context.user_data['profile'] = context.user_data.get('profile', {})
+    context.user_data['profile']['nickname'] = update.message.text
+    
+    await update.message.reply_text("Question 2: What is your occupation?")
+    return PROFILE_OCCUPATION
+
+async def profile_occupation(update, context):
+    context.user_data['profile']['occupation'] = update.message.text
+    
+    await update.message.reply_text("Question 3: What are your hobbies?")
+    return PROFILE_HOBBIES
+
+async def profile_hobbies(update, context):
+    context.user_data['profile']['hobbies'] = update.message.text
+    
+    await update.message.reply_text("Question 4: What food do you like to eat?")
+    return PROFILE_FOOD_LIKES
+
+async def profile_food_likes(update, context):
+    context.user_data['profile']['food_likes'] = update.message.text
+    
+    await update.message.reply_text("Question 5: What food do you dislike to eat?")
+    return PROFILE_FOOD_DISLIKES
+
+async def profile_food_dislikes(update, context):
+    context.user_data['profile']['food_dislikes'] = update.message.text
+    
+    await update.message.reply_text("Question 6: What are you allergic to?")
+    return PROFILE_ALLERGIES
+
+async def profile_allergies(update, context):
+    user_id = update.message.from_user.id
+    context.user_data['profile']['allergies'] = update.message.text
+    
+    # Save the profile
+    save_profile(user_id, context.user_data['profile'])
+    
+    profile = context.user_data['profile']
+    profile_text = "Thanks! Your profile has been saved successfully.\n"
+    profile_text += f"Nickname: {profile.get('nickname', 'Not set')}\n"
+    profile_text += f"Occupation: {profile.get('occupation', 'Not set')}\n"
+    profile_text += f"Hobbies: {profile.get('hobbies', 'Not set')}\n"
+    profile_text += f"Food likes: {profile.get('food_likes', 'Not set')}\n"
+    profile_text += f"Food dislikes: {profile.get('food_dislikes', 'Not set')}\n"
+    profile_text += f"Allergies: {profile.get('allergies', 'Not set')}"
+    
+    await update.message.reply_text(profile_text)
+    return ConversationHandler.END
 # <--END OF STATE FUNCTIONS-->
 
 # <--START OF CALLBACK FUNCTIONS-->
@@ -192,9 +314,25 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
     
+    # Profile conversation handler
+    profile_handler = ConversationHandler(
+        entry_points=[CommandHandler("profile", profile_command)],
+        states={
+            PROFILE_MENU: [CallbackQueryHandler(profile_menu_handler)],
+            PROFILE_NICKNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_nickname)],
+            PROFILE_OCCUPATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_occupation)],
+            PROFILE_HOBBIES: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_hobbies)],
+            PROFILE_FOOD_LIKES: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_food_likes)],
+            PROFILE_FOOD_DISLIKES: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_food_dislikes)],
+            PROFILE_ALLERGIES: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_allergies)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+    
     # Add all handlers
     application.add_handler(conv_handler)
     application.add_handler(sembang_handler)
+    application.add_handler(profile_handler)
     application.add_handler(CommandHandler("makan", makan_command))
     application.add_handler(CommandHandler("jomxz", jomxz_command))
     
