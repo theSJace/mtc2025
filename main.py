@@ -7,6 +7,7 @@ import os
 from dotenv import load_dotenv
 import json
 from datetime import datetime
+import requests
 
 # Load environment variables from .env file if it exists
 load_dotenv()
@@ -14,6 +15,7 @@ load_dotenv()
 # Get environment variables or use default values
 OLLAMA_ENDPOINT = os.environ.get("OLLAMA_ENDPOINT", "http://localhost:11434")
 TELEBOT_TOKEN = os.environ.get("TELEBOT-TOKEN", None)
+API_ENDPOINT = os.environ.get("API_ENDPOINT", "http://localhost:8000")
 
 # Check if TELEBOT_TOKEN is set
 if TELEBOT_TOKEN is None:
@@ -24,7 +26,7 @@ from utils import *
 # States
 MAINMENU, MENUWRAPPER, MAKAN, JOMXZ, SEMBANG, SEMBANG_FREQUENCY, SEMBANG_DAY, SEMBANG_TIME, SEMBANG_REFLECTION = range(9)
 # Profile states
-PROFILE_MENU, PROFILE_VIEW, PROFILE_EDIT, PROFILE_NICKNAME, PROFILE_OCCUPATION, PROFILE_HOBBIES, PROFILE_FOOD_LIKES, PROFILE_FOOD_DISLIKES, PROFILE_ALLERGIES = range(9, 18)
+PROFILE_MENU, PROFILE_VIEW, PROFILE_EDIT, PROFILE_NICKNAME, PROFILE_DOB, PROFILE_ROLE, PROFILE_EMAIL, PROFILE_HOBBIES, PROFILE_FOOD_LIKES, PROFILE_FOOD_DISLIKES, PROFILE_PARENT_ID, PROFILE_EDIT_MENU, PROFILE_EDIT_HOBBIES, PROFILE_EDIT_FOOD_LIKES, PROFILE_EDIT_FOOD_DISLIKES = range(9, 24)
 
 # Profiles directory
 PROFILES_DIR = "profiles"
@@ -78,8 +80,36 @@ def get_profile_path(user_id):
     return os.path.join(PROFILES_DIR, f"{user_id}.json")
 
 def save_profile(user_id, profile_data):
-    with open(get_profile_path(user_id), 'w') as f:
-        json.dump(profile_data, f)
+    # Ensure profiles directory exists
+    os.makedirs(PROFILES_DIR, exist_ok=True)
+    
+    # Save to local JSON file
+    profile_path = os.path.join(PROFILES_DIR, f"{user_id}.json")
+    with open(profile_path, 'w') as f:
+        json.dump(profile_data, f, indent=4)
+    
+    # Prepare data for API
+    api_data = {
+        "userNickName": profile_data.get('nickname', ''),
+        "userEmail": profile_data.get('email', ''),
+        "userDob": profile_data.get('dob', ''),
+        "userType": profile_data.get('role', ''),
+        "hobbies": profile_data.get('hobbies', ''),
+        "food_likes": profile_data.get('food_likes', ''),
+        "food_dislikes": profile_data.get('food_dislikes', ''),
+        "parentId": profile_data.get('parent_id', ''),
+        "userId": str(user_id)
+    }
+    
+    # Send data to API
+    try:
+        response = requests.post(f"{API_ENDPOINT}/user", json=api_data)
+        if response.status_code == 200 or response.status_code == 201:
+            logging.info(f"Profile for user {user_id} successfully sent to API")
+        else:
+            logging.error(f"Failed to send profile to API. Status code: {response.status_code}, Response: {response.text}")
+    except Exception as e:
+        logging.error(f"Error sending profile to API: {str(e)}")
 
 def load_profile(user_id):
     profile_path = get_profile_path(user_id)
@@ -91,9 +121,34 @@ def load_profile(user_id):
 
 # <--START OF STATE FUNCTIONS-->
 async def start(update, context):
-    current_date = datetime.now().strftime("%B %d")
-    await update.message.reply_text(f"Selamat datang! I'm KeluargaAI, your family companion designed to strengthen the bonds between families in Singapore.\n\nIn today's busy world, I'm here to help your family stay connected, celebrate traditions, and create meaningful moments together.\n\nWhether you're looking for activities to do as a family, or ways to connect across generations, I'm here to assist.\n{current_date}\n\n👤 /profile - View or edit your personal profile\n\n🍚 /makan - Decide what and where to eat\n\n📅 /jomxz - Find activities based on interests\n\n💬 /sembang - Schedule family reflection time")
-    return ConversationHandler.END
+    # Get the user's Telegram ID
+    user_id = update.message.from_user.id
+    
+    # Check if profile exists in database
+    # TODO: Integrate with database later. Using static check for now.
+    profile = load_profile(user_id)
+    
+    if profile:
+        # Profile found, send welcome message
+        await update.message.reply_text(
+            "Selamat pagi Keluarga Bahagia! I'm KeluargaAI, your family assistant.\n\n"
+            "Use my commands to help plan family meals, activities, and reflection time together.\n\n"
+            "🍚 /makan - Decide what and where to eat\n\n"
+            "📅 /jomxz - Find activities based on interests\n\n"
+            "💬 /sembang - Schedule family reflection time\n\n"
+            "👤 /profile - View and update your family profile"
+        )
+        return ConversationHandler.END
+    else:
+        # No profile found, start profile creation flow
+        await update.message.reply_text(
+            "Selamat datang! I'm KeluargaAI, your family companion designed to strengthen the bonds between families in Singapore.\n\n"
+            "In today's busy world, I'm here to help your family stay connected, celebrate traditions, and create meaningful moments together.\n\n"
+            "Whether you're looking for activities to do as a family, or ways to connect across generations, I'm here to assist.\n\n"
+            "Let's set up your profile first so I can better assist you!"
+        )
+        await update.message.reply_text("Question 1: What's your nickname?")
+        return PROFILE_NICKNAME
 
 async def cancel(update, context):
     await update.message.reply_text("Thank you for using this service.")
@@ -206,76 +261,202 @@ async def profile_menu_handler(update, context):
         profile = load_profile(user_id)
         
         if profile:
-            profile_text = f"Nickname: {profile.get('nickname', 'Not set')}\n"
-            profile_text += f"Occupation: {profile.get('occupation', 'Not set')}\n"
+            profile_text = f"Telegram ID: {profile.get('user_id', 'Not set')}\n"
+            profile_text += f"Nickname: {profile.get('nickname', 'Not set')}\n"
+            profile_text += f"Date of Birth: {profile.get('dob', 'Not set')}\n"
+            profile_text += f"Role: {profile.get('role', 'Not set')}\n"
+            if profile.get('role') == 'Child':
+                profile_text += f"Parent ID: {profile.get('parent_id', 'Not set')}\n"
+            else:  # Parent
+                profile_text += f"Email: {profile.get('email', 'Not set')}\n"
             profile_text += f"Hobbies: {profile.get('hobbies', 'Not set')}\n"
             profile_text += f"Food likes: {profile.get('food_likes', 'Not set')}\n"
-            profile_text += f"Food dislikes: {profile.get('food_dislikes', 'Not set')}\n"
-            profile_text += f"Allergies: {profile.get('allergies', 'Not set')}"
+            profile_text += f"Food dislikes: {profile.get('food_dislikes', 'Not set')}"
             
-            await query.edit_message_text(profile_text)
+            # Create keyboard with edit and back buttons
+            keyboard = [
+                [InlineKeyboardButton("Edit Profile", callback_data="edit_profile")],
+                [InlineKeyboardButton("Back to Main Menu", callback_data="exit_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(profile_text, reply_markup=reply_markup)
+            return PROFILE_MENU
         else:
-            await query.edit_message_text("You currently have no profile saved. Please create your profile.")
-        return ConversationHandler.END
+            # Start profile creation automatically
+            await query.edit_message_text("Let's set up your profile! I'll ask you a few questions.")
+            await query.message.reply_text("Question 1: What's your nickname?")
+            return PROFILE_NICKNAME
     
     elif choice == "edit_profile":
-        await query.edit_message_text("Edit my profile")
-        await query.message.reply_text("Let's set up your profile! I'll ask you a few questions. Question 1: What is your nickname in the family?")
-        return PROFILE_NICKNAME
+        # Show edit menu with options for what can be edited
+        keyboard = [
+            [InlineKeyboardButton("Edit Hobbies", callback_data="edit_hobbies")],
+            [InlineKeyboardButton("Edit Food Likes", callback_data="edit_food_likes")],
+            [InlineKeyboardButton("Edit Food Dislikes", callback_data="edit_food_dislikes")],
+            [InlineKeyboardButton("Back", callback_data="view_profile")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text("What would you like to edit?", reply_markup=reply_markup)
+        return PROFILE_EDIT_MENU
     
     elif choice == "exit_menu":
-        await query.edit_message_text("Exiting profile menu.")
+        await query.edit_message_text("Returning to main menu.")
         return ConversationHandler.END
 
+async def profile_edit_menu_handler(update, context):
+    query = update.callback_query
+    await query.answer()
+    choice = query.data
+    
+    if choice == "edit_hobbies":
+        await query.edit_message_text("Please enter your new hobbies:")
+        return PROFILE_EDIT_HOBBIES
+    elif choice == "edit_food_likes":
+        await query.edit_message_text("Please enter your new food likes:")
+        return PROFILE_EDIT_FOOD_LIKES
+    elif choice == "edit_food_dislikes":
+        await query.edit_message_text("Please enter your new food dislikes:")
+        return PROFILE_EDIT_FOOD_DISLIKES
+    elif choice == "view_profile":
+        # Go back to viewing profile
+        return await profile_menu_handler(update, context)
+
+async def profile_edit_hobbies(update, context):
+    user_id = update.message.from_user.id
+    profile = load_profile(user_id)
+    if profile:
+        profile['hobbies'] = update.message.text
+        save_profile(user_id, profile)
+        await update.message.reply_text(f"Your hobbies have been updated to: {update.message.text}")
+    else:
+        await update.message.reply_text("No profile found. Please create a profile first.")
+    return ConversationHandler.END
+
+async def profile_edit_food_likes(update, context):
+    user_id = update.message.from_user.id
+    profile = load_profile(user_id)
+    if profile:
+        profile['food_likes'] = update.message.text
+        save_profile(user_id, profile)
+        await update.message.reply_text(f"Your food likes have been updated to: {update.message.text}")
+    else:
+        await update.message.reply_text("No profile found. Please create a profile first.")
+    return ConversationHandler.END
+
+async def profile_edit_food_dislikes(update, context):
+    user_id = update.message.from_user.id
+    profile = load_profile(user_id)
+    if profile:
+        profile['food_dislikes'] = update.message.text
+        save_profile(user_id, profile)
+        await update.message.reply_text(f"Your food dislikes have been updated to: {update.message.text}")
+    else:
+        await update.message.reply_text("No profile found. Please create a profile first.")
+    return ConversationHandler.END
+
 async def profile_nickname(update, context):
+    # Initialize profile with user_id
+    user_id = update.message.from_user.id
     context.user_data['profile'] = context.user_data.get('profile', {})
+    context.user_data['profile']['user_id'] = user_id
     context.user_data['profile']['nickname'] = update.message.text
     
-    await update.message.reply_text("Question 2: What is your occupation?")
-    return PROFILE_OCCUPATION
+    # Create calendar for date selection
+    # For now, we'll use a simple text input as Telegram doesn't have a built-in date picker
+    # In a real implementation, you might want to use a custom calendar component
+    await update.message.reply_text("Question 2: Please input your Date Of Birth (DD/MM/YYYY):")
+    return PROFILE_DOB
 
-async def profile_occupation(update, context):
-    context.user_data['profile']['occupation'] = update.message.text
+async def profile_dob(update, context):
+    context.user_data['profile']['dob'] = update.message.text
     
-    await update.message.reply_text("Question 3: What are your hobbies?")
+    # Create role selection buttons
+    keyboard = [
+        [InlineKeyboardButton("Parent", callback_data="Parent")],
+        [InlineKeyboardButton("Child", callback_data="Child")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text("Question 3: Are you a parent or child?", reply_markup=reply_markup)
+    return PROFILE_ROLE
+
+async def profile_role(update, context):
+    query = update.callback_query
+    await query.answer()
+    
+    role = query.data
+    context.user_data['profile']['role'] = role
+    
+    await query.edit_message_text(f"You selected: {role}")
+    
+    # Different flow based on role
+    if role == 'Parent':
+        await query.message.reply_text("Question 4: What is your email address?")
+        return PROFILE_EMAIL
+    else:  # Child
+        await query.message.reply_text("Question 4: What are your hobbies?")
+        return PROFILE_HOBBIES
+
+async def profile_email(update, context):
+    context.user_data['profile']['email'] = update.message.text
+    
+    await update.message.reply_text("Question 5: What are your hobbies?")
     return PROFILE_HOBBIES
 
 async def profile_hobbies(update, context):
     context.user_data['profile']['hobbies'] = update.message.text
     
-    await update.message.reply_text("Question 4: What food do you like to eat?")
+    await update.message.reply_text("Question 6: What food do you like to eat?")
     return PROFILE_FOOD_LIKES
 
 async def profile_food_likes(update, context):
     context.user_data['profile']['food_likes'] = update.message.text
     
-    await update.message.reply_text("Question 5: What food do you dislike to eat?")
+    await update.message.reply_text("Question 7: What food do you dislike to eat?")
     return PROFILE_FOOD_DISLIKES
 
 async def profile_food_dislikes(update, context):
     context.user_data['profile']['food_dislikes'] = update.message.text
     
-    await update.message.reply_text("Question 6: What are you allergic to?")
-    return PROFILE_ALLERGIES
+    # If role is Child, ask for parent ID
+    if context.user_data['profile'].get('role') == 'Child':
+        await update.message.reply_text("Question 8: What is your parent id? This is required for child profiles.")
+        return PROFILE_PARENT_ID
+    else:
+        # If role is Parent, save profile and finish
+        user_id = update.message.from_user.id
+        save_profile(user_id, context.user_data['profile'])
+        return await complete_profile(update, context)
 
-async def profile_allergies(update, context):
+async def profile_parent_id(update, context):
     user_id = update.message.from_user.id
-    context.user_data['profile']['allergies'] = update.message.text
+    context.user_data['profile']['parent_id'] = update.message.text
     
     # Save the profile
     save_profile(user_id, context.user_data['profile'])
     
+    return await complete_profile(update, context)
+
+async def complete_profile(update, context):
     profile = context.user_data['profile']
-    profile_text = "Thanks! Your profile has been saved successfully.\n"
+    profile_text = "Thank you! Here is the summary of your profile:\n\n"
+    profile_text += f"Telegram ID: {profile.get('user_id', 'Not set')}\n"
     profile_text += f"Nickname: {profile.get('nickname', 'Not set')}\n"
-    profile_text += f"Occupation: {profile.get('occupation', 'Not set')}\n"
+    profile_text += f"Date of Birth: {profile.get('dob', 'Not set')}\n"
+    profile_text += f"Role: {profile.get('role', 'Not set')}\n"
+    if profile.get('role') == 'Child':
+        profile_text += f"Parent ID: {profile.get('parent_id', 'Not set')}\n"
+    else:  # Parent
+        profile_text += f"Email: {profile.get('email', 'Not set')}\n"
     profile_text += f"Hobbies: {profile.get('hobbies', 'Not set')}\n"
     profile_text += f"Food likes: {profile.get('food_likes', 'Not set')}\n"
-    profile_text += f"Food dislikes: {profile.get('food_dislikes', 'Not set')}\n"
-    profile_text += f"Allergies: {profile.get('allergies', 'Not set')}"
+    profile_text += f"Food dislikes: {profile.get('food_dislikes', 'Not set')}"
     
     await update.message.reply_text(profile_text)
     return ConversationHandler.END
+
 # <--END OF STATE FUNCTIONS-->
 
 # <--START OF CALLBACK FUNCTIONS-->
@@ -297,7 +478,15 @@ def main():
         states={
             MENUWRAPPER:[
                 CallbackQueryHandler(buttonClick)
-            ]
+            ],
+            PROFILE_NICKNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_nickname)],
+            PROFILE_DOB: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_dob)],
+            PROFILE_ROLE: [CallbackQueryHandler(profile_role)],
+            PROFILE_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_email)],
+            PROFILE_HOBBIES: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_hobbies)],
+            PROFILE_FOOD_LIKES: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_food_likes)],
+            PROFILE_FOOD_DISLIKES: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_food_dislikes)],
+            PROFILE_PARENT_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_parent_id)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
@@ -320,11 +509,17 @@ def main():
         states={
             PROFILE_MENU: [CallbackQueryHandler(profile_menu_handler)],
             PROFILE_NICKNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_nickname)],
-            PROFILE_OCCUPATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_occupation)],
+            PROFILE_DOB: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_dob)],
+            PROFILE_ROLE: [CallbackQueryHandler(profile_role)],
+            PROFILE_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_email)],
             PROFILE_HOBBIES: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_hobbies)],
             PROFILE_FOOD_LIKES: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_food_likes)],
             PROFILE_FOOD_DISLIKES: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_food_dislikes)],
-            PROFILE_ALLERGIES: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_allergies)],
+            PROFILE_PARENT_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_parent_id)],
+            PROFILE_EDIT_MENU: [CallbackQueryHandler(profile_edit_menu_handler)],
+            PROFILE_EDIT_HOBBIES: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_edit_hobbies)],
+            PROFILE_EDIT_FOOD_LIKES: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_edit_food_likes)],
+            PROFILE_EDIT_FOOD_DISLIKES: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_edit_food_dislikes)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
